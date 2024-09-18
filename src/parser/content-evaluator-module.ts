@@ -55,15 +55,21 @@ export class ContentEvaluatorModule implements Module {
 
   async transform(data: Readonly<IssueActivity>, result: Result) {
     const promises: Promise<GithubCommentScore[]>[] = [];
+    const allCommentsUnClean = data.allComments || [];
+    const allComments: { id: number; comment: string; author: string }[] = [];
+    for (const commentObj of allCommentsUnClean) {
+      if (commentObj.user) {
+        allComments.push({ id: commentObj.id, comment: commentObj.body || "", author: commentObj.user.login });
+      }
+    }
 
     for (const key of Object.keys(result)) {
       const currentElement = result[key];
       const comments = currentElement.comments || [];
       const specificationBody = data.self?.body;
-
       if (specificationBody && comments.length) {
         promises.push(
-          this._processComment(comments, specificationBody).then(
+          this._processComment(comments, specificationBody, allComments, key).then(
             (commentsWithScore) => (currentElement.comments = commentsWithScore)
           )
         );
@@ -74,23 +80,28 @@ export class ContentEvaluatorModule implements Module {
     return result;
   }
 
-  async _processComment(comments: Readonly<GithubCommentScore>[], specificationBody: string) {
+  async _processComment(
+    comments: Readonly<GithubCommentScore>[],
+    specificationBody: string,
+    allComments: { id: number; comment: string; author: string }[],
+    author: string
+  ) {
     const commentsWithScore: GithubCommentScore[] = [...comments];
-
     // exclude comments that have fixed relevance multiplier. e.g. review comments = 1
-    const commentsToEvaluate: { id: number; comment: string }[] = [];
+    const commentsToEvaluate: { id: number; comment: string; author: string }[] = [];
     for (let i = 0; i < commentsWithScore.length; i++) {
       const currentComment = commentsWithScore[i];
       if (!this._fixedRelevances[currentComment.type]) {
         commentsToEvaluate.push({
           id: currentComment.id,
           comment: currentComment.content,
+          author: author,
         });
       }
     }
 
     const relevancesByAI = commentsToEvaluate.length
-      ? await this._evaluateComments(specificationBody, commentsToEvaluate)
+      ? await this._evaluateComments(specificationBody, commentsToEvaluate, allComments)
       : {};
 
     if (Object.keys(relevancesByAI).length !== commentsToEvaluate.length) {
@@ -135,9 +146,10 @@ export class ContentEvaluatorModule implements Module {
 
   async _evaluateComments(
     specification: string,
-    comments: { id: number; comment: string }[]
+    comments: { id: number; comment: string; author: string }[],
+    allComments: { id: number; comment: string; author: string }[]
   ): Promise<RelevancesByOpenAi> {
-    const prompt = this._generatePrompt(specification, comments);
+    const prompt = this._generatePrompt(specification, allComments, comments);
     const dummyResponse = JSON.stringify(this._generateDummyResponse(comments), null, 2);
     const maxTokens = this._calculateMaxTokens(dummyResponse);
 
@@ -172,14 +184,30 @@ export class ContentEvaluatorModule implements Module {
     }
   }
 
-  _generatePrompt(issue: string, comments: { id: number; comment: string }[]) {
+  _generatePrompt(
+    issue: string,
+    allComments: { id: number; comment: string; author: string }[],
+    comments: { id: number; comment: string; author: string }[]
+  ) {
     if (!issue?.length) {
       throw new Error("Issue specification comment is missing or empty");
     }
-    return `I need to evaluate the relevance of GitHub contributors' comments to a specific issue specification. Specifically, I'm interested in how much each comment helps to further define the issue specification or contributes new information or research relevant to the issue. Please provide a float between 0 and 1 to represent the degree of relevance. A score of 1 indicates that the comment is entirely relevant and adds significant value to the issue, whereas a score of 0 indicates no relevance or added value. A stringified JSON is given below that contains the specification and contributors' comments. Each comment in the JSON has a unique ID and comment content. \n\n\`\`\`\n${JSON.stringify(
-      { specification: issue, comments: comments }
-    )}\n\`\`\`\n\n\nTo what degree are each of the comments in the conversation relevant and valuable to further defining the issue specification? Please reply with ONLY a JSON where each key is the comment ID given in JSON above, and the value is a float number between 0 and 1 corresponding to the comment. The float number should represent the degree of relevance and added value of the comment to the issue. The total number of properties in your JSON response should equal exactly ${
-      comments.length
-    }.`;
+
+    return `Please evaluate the relevance of the following GitHub comments in relation to the specified issue. Assess how each comment contributes to clarifying or solving the issue. 
+
+    **Issue Specification:**
+    "${issue}"
+
+    **All Comments:**
+    ${JSON.stringify(allComments, null, 2)}
+
+    **Comments for Evaluation:**
+    ${JSON.stringify(comments, null, 2)}
+
+    For each comment provided for evaluation, assign a relevance score between 0 and 1, where:
+    - 1 means the comment is highly relevant and significantly enhances the issue understanding.
+    - 0 means the comment is irrelevant or does not contribute any value.
+
+    Respond with a JSON object where each key is the comment ID from the evaluation comments, and the value is a float representing the relevance score. Ensure that the total number of properties in your response matches the number of comments being evaluated: ${comments.length}.`;
   }
 }
