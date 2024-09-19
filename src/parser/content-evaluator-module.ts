@@ -152,7 +152,6 @@ export class ContentEvaluatorModule implements Module {
     const prompt = this._generatePrompt(specification, allComments, comments);
     const dummyResponse = JSON.stringify(this._generateDummyResponse(comments), null, 2);
     const maxTokens = this._calculateMaxTokens(dummyResponse);
-
     const response: OpenAI.Chat.ChatCompletion = await this._openAi.chat.completions.create({
       model: this._configuration?.openAi.model || "gpt-4o-2024-08-06",
       response_format: { type: "json_object" },
@@ -193,21 +192,27 @@ export class ContentEvaluatorModule implements Module {
       throw new Error("Issue specification comment is missing or empty");
     }
 
-    return `Please evaluate the relevance of the following GitHub comments in relation to the specified issue. Assess how each comment contributes to clarifying or solving the issue. 
+    return `Instruction: 
+    Go through all the comments first keep them in memory, then start with the following prompt
 
-    **Issue Specification:**
+    OUTPUT FORMAT:
+    {ID: CONNECTION SCORE} For Each record, based on the average value from the CONNECTION SCORE from ALL COMMENTS, TITLE and BODY, one for each comment under evaluation
+    Global Context:
+    Specification
     "${issue}"
-
-    **All Comments:**
+    ALL COMMENTS:
     ${JSON.stringify(allComments, null, 2)}
-
-    **Comments for Evaluation:**
+    IMPORTANT CONTEXT:
+    You have now seen all the comments made by other users, keeping the comments in mind think in what ways comments to be evaluated be connected. The comments that were related to the comment under evaluation might come after or before them in the list of all comments but they would be there in ALL COMMENTS. COULD BE BEFORE OR AFTER, you have diligently search through all the comments in ALL COMMENTS.
+    START EVALUATING:
     ${JSON.stringify(comments, null, 2)}
+    POST EVALUATION:
+    THE RESULT FROM THIS SHOULD BE ONLY THE SCORES BASED ON THE FLOATING POINT VALUE CONNECTING HOW CLOSE THE COMMENT IS FROM ALL COMMENTS AND TITLE AND BODY.
 
-    For each comment provided for evaluation, assign a relevance score between 0 and 1, where:
-    - 1 means the comment is highly relevant and significantly enhances the issue understanding.
-    - 0 means the comment is irrelevant or does not contribute any value.
+    Now Assign them scores a float value ranging from 0 to 1, where 0 is spam (lowest value), and 1 is something that's very relevant (Highest Value), here relevance should mean a variety of things, it could be a fix to the issue, it could be a bug in solution, it could a SPAM message, it could be comment, that on its own does not carry weight, but when CHECKED IN ALL COMMENTS, may be a crucial piece of information for debugging and solving the ticket. If YOU THINK ITS NOT RELEATED to ALL COMMENTS or TITLE OR ISSUE SPEC, then give it a 0 SCORE.
 
-    Respond with a JSON object where each key is the comment ID from the evaluation comments, and the value is a float representing the relevance score. Ensure that the total number of properties in your response matches the number of comments being evaluated: ${comments.length}.`;
+    OUTPUT:
+    RETURN ONLY A JSON with the ID and the connection score (FLOATING POINT VALUE) with ALL COMMENTS TITLE AND BODY for each comment under evaluation.  RETURN ONLY ONE CONNECTION SCORE VALUE for each comment;
+    }`;
   }
 }
